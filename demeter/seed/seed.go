@@ -1,7 +1,13 @@
 package seed
 
 import (
+    "slices"
 	"reflect"
+)
+
+const (
+    Int     reflect.Kind = reflect.Int
+    String  reflect.Kind = reflect.String
 )
 
 // The Seed interface allows the implementation of Seeds
@@ -22,7 +28,7 @@ type Seed interface {
 
 	// These methods returns seeds ready to drill
 	// Method to return a single seed
-	ReadOne() any
+	ReadOne() []prop
 
 	// Method to return an specified amount of seeds
 	ReadMany(int) []any
@@ -37,7 +43,7 @@ type Seed interface {
     GetMeta() *SeedMeta
 }
 
-// Seeds netadata to perform operations on data and keep state of it
+// Seeds metadata to perform operations on data and keep state of it
 type SeedMeta struct {
     
     // Seed name
@@ -45,64 +51,70 @@ type SeedMeta struct {
 
     // Seed props
     Props []prop
+
+    // Seed names
+    Names map[string]NameIndex
+
+    // Seed struct
+    Struct reflect.Value
 }
 
+func (s *SeedMeta) GetField(name string) reflect.Value {
+    
+    field, ok := s.Names[name]
+
+    // If no name found then return the struct
+    if !ok {
+        return s.Struct
+    }
+
+    return s.Struct.Field(field.field)
+}
+
+// Tuple for prop and field indexes, used by names map to get field or prop directly
+type NameIndex struct {
+    prop  int
+    field int
+}
+
+// Property that can be associated with a seed, seeds can have zero to N properties
 type prop struct {
-    Name string 
-    Kind reflect.Kind
+    Name    string 
+    Kind    reflect.Kind
 }
 
 // An utility function to get the props of a struct of type any,
 // allows seed implementations to follow the same guideline when
 // setting up the initialization of the inner struct
-func ObtainProps(base any, name string) SeedMeta {
+func ObtainProps(base any, name string, types ...reflect.Kind) SeedMeta {
+
+    // TODO: make sure base is a pointer to struct
 
     meta := SeedMeta {
         Name: name,
         Props: []prop{},
+        Names: make(map[string]NameIndex),
+        Struct: reflect.ValueOf(base).Elem(),
     }
 
 	// check if base is a struct otherwise return no headers
-	t := reflect.TypeOf(base)
-
+	t := reflect.ValueOf(base).Elem().Type()
 	if t.Kind() != reflect.Struct {
 		return meta
 	}
 
+    // iterate over each field to create props
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
-		
+
         switch kind := field.Type.Kind(); kind {
             case reflect.Int, reflect.String:
-                meta.Props = append(meta.Props, prop{Name: field.Name, Kind: kind,})
+                if len(types) == 0 || slices.Contains(types, kind){
+                    meta.Props = append(meta.Props, prop{Name: field.Name, Kind: kind,})
+                    meta.Names[field.Name] = NameIndex{prop: len(meta.Props) - 1, field: i,}
+                }
         }
 	}
 
 	return meta
-}
-
-type CountSeed struct {
-	counter int
-    meta SeedMeta
-}
-
-func NewCountSeed(base any, start int) *CountSeed {
-	return &CountSeed{
-		counter: start,
-		meta: ObtainProps(base, "CountSeed"),
-	}
-}
-
-func (s *CountSeed) GetProps() []string {
-    
-    props := make([]string, len(s.meta.Props))
-    for i, prop := range s.meta.Props {
-        props[i] = prop.Name
-    }
-
-	return props
-}
-
-func (s *CountSeed) GetSize() int {
-	return -1
 }
